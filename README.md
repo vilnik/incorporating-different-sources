@@ -13,7 +13,9 @@ Before you begin, ensure you have met the following requirements:
   - **Alpha Vantage:** Obtain your API key by signing up [here](https://www.alphavantage.co/).
   - **Financial Modeling Prep:** Sign up [here](https://financialmodelingprep.com/developer/docs/) to get your API key.
 
-### Data
+### Manual Data Collection
+In addition to the data automatically gathered through the APIs, there is some data you'll need to collect and place manually:
+
 - **S&P 500 Historical Components:**
   - Download `S&P 500 Historical Components & Changes(04-16-2023).csv` from [this repository](https://github.com/fja05680/sp500).
   - Place the downloaded file in `data/s500_components`.
