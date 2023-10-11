@@ -3,7 +3,7 @@
 This repository contains code related to the research project 'Incorporating Different Sources of Information for Bayesian Optimal Portfolio Selection'. 
 
 ## Research Overview
-This paper introduces Bayesian inference procedures for tangency portfolios, with a spotlight on deriving a new conjugate prior for portfolio weights. The developed approach not only facilitates direct inference regarding the weights but also smoothly integrates additional information into the prior specification. The methodology automatically incorporates high-frequency returns and the VIX into the decision-making process for optimal portfolio construction, significantly improving the strategy's efficacy. Through extensive empirical studies, it has been observed that our method consistently outperforms existing trading strategies in most cases examined, making it a reliable technique for investors and researchers alike.
+The associated paper introduces Bayesian inference procedures for tangency portfolios, with a primary focus on deriving a new conjugate prior for portfolio weights. This approach not only enables direct inference about the weights but also seamlessly integrates additional information into the prior specification. Specifically, it automatically incorporates high-frequency returns and the VIX, significantly enhancing the decision-making process for optimal portfolio construction. While the Jeffreys prior is also acknowledged, emphasis is placed on the advantages and practical applications of the conjugate prior. An extensive empirical study reveals that our method, leveraging this conjugate prior, consistently outperforms existing trading strategies in the majority of examined cases.
 
 ## Prerequisites
 
