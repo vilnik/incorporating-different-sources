@@ -25,7 +25,7 @@ os.makedirs(results_dir, exist_ok=True)
 
 def main():
     # Dates as in the paper "Incorporating different sources of information for Bayesian optimal portfolio selection"
-    str_start_date = "2008-01-01"
+    str_start_date = "2007-01-01"
     str_end_date = "2023-06-30"
     ts_start_date = pd.Timestamp(str_start_date)
     ts_end_date = pd.Timestamp(str_end_date)
@@ -49,7 +49,7 @@ def main():
                                                                     index_col=0,
                                                                     parse_dates=True)
         else:
-            portfolio_performance = portfolio_calculations.evaluate_portfolio(portfolio_spec,
+            portfolio_performance = portfolio_calculations.backtest_portfolio(portfolio_spec,
                                                                                ts_start_date,
                                                                                ts_end_date,
                                                                                market_data)
