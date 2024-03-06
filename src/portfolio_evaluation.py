@@ -77,7 +77,6 @@ def plot_vix_and_sp500(vix_prices_df, sp500_simple_returns_df):
 
 def plot_performance(portfolio_setups_simple_returns_df,
                      portfolio_setups_excess_simple_returns_df,
-                     ra,
                      tc):
     # Filter columns
     # Create empty DataFrames for storing the filtered columns
@@ -86,46 +85,44 @@ def plot_performance(portfolio_setups_simple_returns_df,
 
     # Loop through each column name to check the conditions
     for col in portfolio_setups_simple_returns_df.columns:
-        if f'tc={tc}' in col or ('tc=' not in col and 'ra=' not in col):
-            if f'ra={ra}' in col or 'ra=' not in col:
-                new_col_name = col.replace(f'tc={tc}', '').replace(f'ra={ra}', '').replace(' , ', '').replace(' ,', '').replace(', ', '')
-                filtered_simple_returns_df[new_col_name] = portfolio_setups_simple_returns_df[col]
+        if f'tc={tc}' in col:
+            new_col_name = col.replace(f'tc={tc}', '').replace(',', '')
+            filtered_simple_returns_df[new_col_name] = portfolio_setups_simple_returns_df[col]
 
     for col in portfolio_setups_excess_simple_returns_df.columns:
-        if f'tc={tc}' in col or ('tc=' not in col and 'ra=' not in col):
-            if f'ra={ra}' in col or 'ra=' not in col:
-                new_col_name = col.replace(f'tc={tc}', '').replace(f'ra={ra}', '').replace(' , ', '').replace(' ,', '').replace(', ', '')
-                filtered_excess_simple_returns_df[new_col_name] = portfolio_setups_excess_simple_returns_df[col]
+        if f'tc={tc}' in col:
+            new_col_name = col.replace(f'tc={tc}', '').replace(',', '')
+            filtered_excess_simple_returns_df[new_col_name] = portfolio_setups_excess_simple_returns_df[col]
 
     # Plot daily returns
     qs.plots.returns(filtered_simple_returns_df,
-                           savefig = f"../results/returns_ra{ra}_tc{tc}")
+                           savefig = f"../results/returns_tc{tc}")
 
     # Plot yearly returns
     qs.plots.yearly_returns(filtered_simple_returns_df,
-                           savefig = f"../results/yearly_returns_ra{ra}_tc{tc}")
+                           savefig = f"../results/yearly_returns_tc{tc}")
 
     # Plot rolling Sharpe
     qs.plots.rolling_sharpe(filtered_excess_simple_returns_df,
-                           savefig = f"../results/rolling_sharpe_ra{ra}_tc{tc}")
+                           savefig = f"../results/rolling_sharpe_tc{tc}")
 
     # Plot rolling Sharpe
     qs.plots.rolling_sortino(filtered_excess_simple_returns_df,
-                           savefig = f"../results/rolling_sortino_ra{ra}_tc{tc}")
+                           savefig = f"../results/rolling_sortino_tc{tc}")
 
     # Plot rolling volatility
     qs.plots.rolling_volatility(filtered_simple_returns_df,
-                           savefig = f"../results/rolling_volatility_ra{ra}_tc{tc}")
+                           savefig = f"../results/rolling_volatility_tc{tc}")
 
     # Plot drawdown
     qs.plots.drawdown(filtered_simple_returns_df,
-                      savefig=f"../results/drawdown_ra{ra}_tc{tc}")
+                      savefig=f"../results/drawdown_tc{tc}")
 
 
 def process_and_highlight_values(metrics_df):
     # Set of metrics that are better when higher
     higher_is_better = {
-        'Cum. return', 'CAGR', 'Sharpe Ratio',
+        'Cum. Return', 'CAGR', 'Sharpe Ratio', 'Prob. Sharpe Ratio',
         'Sortino Ratio', 'Calmar Ratio', 'Max. DD',
         'Avg. Loss', 'Avg. Return', 'Avg. Win', 'Best Day',
         'Worst Day', 'Daily VaR'
@@ -175,7 +172,6 @@ def process_and_highlight_values(metrics_df):
 def performance_metrics(portfolio_setups_simple_returns_df,
                          portfolio_setups_excess_simple_returns_df,
                         portfolio_setups_turnover,
-                         ra,
                          tc):
 
     # Filter columns
@@ -186,18 +182,18 @@ def performance_metrics(portfolio_setups_simple_returns_df,
 
     # Loop through each column name to check the conditions
     for col in portfolio_setups_simple_returns_df.columns:
-        if f'tc={tc}' in col and (f'ra=' not in col or f'ra={ra}' in col):
-                new_col_name = col.replace(f'tc={tc}', '').replace(f'ra={ra}', '').replace(' , ', '').replace(' ,', '').replace(', ', '')
+        if f'tc={tc}' in col:
+                new_col_name = col.replace(f'tc={tc}', '').replace(',', '')
                 filtered_simple_returns_df[new_col_name] = portfolio_setups_simple_returns_df[col]
 
     for col in portfolio_setups_excess_simple_returns_df.columns:
-        if f'tc={tc}' in col and (f'ra=' not in col or f'ra={ra}' in col):
-                new_col_name = col.replace(f'tc={tc}', '').replace(f'ra={ra}', '').replace(' , ', '').replace(' ,', '').replace(', ', '')
+        if f'tc={tc}' in col:
+                new_col_name = col.replace(f'tc={tc}', '').replace(',', '')
                 filtered_excess_simple_returns_df[new_col_name] = portfolio_setups_excess_simple_returns_df[col]
 
     for col in portfolio_setups_turnover.columns:
-        if f'tc={tc}' in col and (f'ra=' not in col or f'ra={ra}' in col):
-                new_col_name = col.replace(f'tc={tc}', '').replace(f'ra={ra}', '').replace(' , ', '').replace(' ,','').replace(', ', '')
+        if f'tc={tc}' in col:
+                new_col_name = col.replace(f'tc={tc}', '').replace(',', '')
                 filtered_turnovers_df[new_col_name] = portfolio_setups_turnover[col]
 
     # Df to store portfolio metrics
@@ -208,13 +204,13 @@ def performance_metrics(portfolio_setups_simple_returns_df,
         portfolio_simple_returns_series = filtered_simple_returns_df[column_name]
 
         portfolio_comp_return = qs.stats.comp(portfolio_simple_returns_series)
-        portfolio_setups_metrics_df.at['Cum. return', column_name] = portfolio_comp_return
+        portfolio_setups_metrics_df.at['Cum. Return', column_name] = portfolio_comp_return
 
     # Calculate the CAGR for each portfolio and add it as a row
     for column_name in filtered_simple_returns_df.columns:
         portfolio_simple_returns_series = filtered_simple_returns_df[column_name]
 
-        portfolio_cagr = qs.stats.cagr(portfolio_simple_returns_series)
+        portfolio_cagr = qs.stats.cagr(portfolio_simple_returns_series, periods=365)
         portfolio_setups_metrics_df.at['CAGR', column_name] = portfolio_cagr
 
     # Calculate the Sharpe ratio for each portfolio and add it as a row
@@ -224,6 +220,13 @@ def performance_metrics(portfolio_setups_simple_returns_df,
         portfolio_sharpe_ratio = qs.stats.sharpe(portfolio_excess_simple_returns_series)
         portfolio_setups_metrics_df.at['Sharpe Ratio', column_name] = portfolio_sharpe_ratio
 
+    # Calculate the Probabilistic Sharpe ratio for each portfolio and add it as a row
+    for column_name in filtered_excess_simple_returns_df.columns:
+        portfolio_excess_simple_returns_series = filtered_excess_simple_returns_df[column_name]
+
+        portfolio_prob_sharpe_ratio = qs.stats.probabilistic_ratio(portfolio_excess_simple_returns_series)
+        portfolio_setups_metrics_df.at['Prob. Sharpe Ratio', column_name] = portfolio_prob_sharpe_ratio
+
     # Calculate the Sortino ratio for each portfolio and add it as a row
     for column_name in filtered_excess_simple_returns_df.columns:
         portfolio_excess_simple_returns_series = filtered_excess_simple_returns_df[column_name]
@@ -232,10 +235,10 @@ def performance_metrics(portfolio_setups_simple_returns_df,
         portfolio_setups_metrics_df.at['Sortino Ratio', column_name] = portfolio_sortino_ratio
 
     # Calculate the Calmar ratio for each portfolio and add it as a row
-    for column_name in filtered_excess_simple_returns_df.columns:
-        portfolio_excess_simple_returns_series = filtered_excess_simple_returns_df[column_name]
+    for column_name in filtered_simple_returns_df.columns:
+        portfolio_simple_returns_series = filtered_simple_returns_df[column_name]
 
-        portfolio_calmar_ratio = qs.stats.calmar(portfolio_excess_simple_returns_series)
+        portfolio_calmar_ratio = qs.stats.cagr(portfolio_simple_returns_series, periods=365) / abs(qs.stats.max_drawdown(portfolio_simple_returns_series))
         portfolio_setups_metrics_df.at['Calmar Ratio', column_name] = portfolio_calmar_ratio
 
     # Calculate the max drawdown for each portfolio and add it as a row
@@ -301,7 +304,7 @@ def performance_metrics(portfolio_setups_simple_returns_df,
         portfolio_setups_metrics_df.at['Avg. Turnover', column_name] = portfolio_turnover
 
     highlighted_metrics_df = process_and_highlight_values(portfolio_setups_metrics_df)
-    highlighted_metrics_df.to_csv(f"../results/metrics_ra{ra}_tc{tc}.csv", index=True)
+    highlighted_metrics_df.to_csv(f"../results/metrics_tc{tc}.csv", index=True)
 
 def compute_excess_returns(portfolio_simple_returns_series,
                            risk_free_rate_df):
@@ -344,57 +347,38 @@ def full_evaluation(portfolio_setups_simple_returns_df,
         # Add portfolio_excess_simple_returns_series to the new DataFrame
         portfolio_setups_excess_simple_returns_df[column_name] = portfolio_excess_simple_returns_series
 
-    # Performance metrics for "tc=5" and optionally "ra=1"
+    # Performance metrics for "tc=5"
     performance_metrics(portfolio_setups_simple_returns_df,
                      portfolio_setups_excess_simple_returns_df,
                     portfolio_setups_turnover,
-                     1,
                      5)
 
-    # Performance metrics for "tc=5" and optionally "ra=2"
+    # Performance metrics for "tc=15"
     performance_metrics(portfolio_setups_simple_returns_df,
                      portfolio_setups_excess_simple_returns_df,
                     portfolio_setups_turnover,
-                     2,
-                     5)
+                     15)
 
-    # Performance metrics for "tc=15" and optionally "ra=1"
+    # Performance metrics for "tc=35"
     performance_metrics(portfolio_setups_simple_returns_df,
                      portfolio_setups_excess_simple_returns_df,
-                     portfolio_setups_turnover,
-                     1,
-                     15)
+                    portfolio_setups_turnover,
+                     35)
 
-    # Performance metrics for "tc=15" and optionally "ra=2"
-    performance_metrics(portfolio_setups_simple_returns_df,
-                     portfolio_setups_excess_simple_returns_df,
-                     portfolio_setups_turnover,
-                     2,
-                     15)
-
-    # Plot performance for "tc=5" and optionally "ra=1"
+    # Plot performance for "tc=5"
     plot_performance(portfolio_setups_simple_returns_df,
                      portfolio_setups_excess_simple_returns_df,
-                     1,
                      5)
 
-    # Plot performance for "tc=5" and optionally "ra=2"
+    # Plot performance for "tc=15"
     plot_performance(portfolio_setups_simple_returns_df,
                      portfolio_setups_excess_simple_returns_df,
-                     2,
-                     5)
-
-    # Plot performance for "tc=15" and optionally "ra=1"
-    plot_performance(portfolio_setups_simple_returns_df,
-                     portfolio_setups_excess_simple_returns_df,
-                     1,
                      15)
 
-    # Plot performance for "tc=15" and optionally "ra=2"
+    # Plot performance for "tc=35"
     plot_performance(portfolio_setups_simple_returns_df,
                      portfolio_setups_excess_simple_returns_df,
-                     2,
-                     15)
+                     35)
 
 
     plot_vix_and_sp500(filtered_vix_prices_df,
