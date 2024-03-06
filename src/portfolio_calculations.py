@@ -99,9 +99,11 @@ def calculate_excess_log_returns_from_prices(portfolio_spec,
     if portfolio_spec["rebalancing_frequency"] == "daily":
         days_between_rebalancing = 1
     elif portfolio_spec["rebalancing_frequency"] == "weekly":
-        days_between_rebalancing = 5
+        #days_between_rebalancing = 5
+        days_between_rebalancing = 1
     elif portfolio_spec["rebalancing_frequency"] == "monthly":
-        days_between_rebalancing = 21
+        #days_between_rebalancing = 21
+        days_between_rebalancing = 1
     else:
         # Log an error and raise an exception if the rebalancing frequency is unknown
         logger.error("Unknown rebalancing frequency.")
@@ -150,9 +152,11 @@ def calculate_rolling_window_frequency_adjusted(portfolio_spec):
     if portfolio_spec["rebalancing_frequency"] == "daily":
         rolling_window_frequency_adjusted = portfolio_spec["rolling_window_days"]
     elif portfolio_spec["rebalancing_frequency"] == "weekly":
-        rolling_window_frequency_adjusted = math.floor(portfolio_spec["rolling_window_days"] / 5)
+        # rolling_window_frequency_adjusted = math.floor(portfolio_spec["rolling_window_days"] / 5)
+        rolling_window_frequency_adjusted = portfolio_spec["rolling_window_days"]
     elif portfolio_spec["rebalancing_frequency"] == "monthly":
-        rolling_window_frequency_adjusted = math.floor(portfolio_spec["rolling_window_days"] / 21)
+        # rolling_window_frequency_adjusted = math.floor(portfolio_spec["rolling_window_days"] / 21)
+        rolling_window_frequency_adjusted = portfolio_spec["rolling_window_days"]
     else:
         # Log an error and raise an exception if the rebalancing frequency is unknown
         logger.error("Unknown rebalancing frequency.")
@@ -171,9 +175,11 @@ def daily_prices_to_rebalancing_frequency_and_window(portfolio_spec,
 
     # Adjust the stock prices DataFrame based on the rebalancing frequency
     if portfolio_spec["rebalancing_frequency"] == "weekly":
-        k_stock_prices_df_frequency_adjusted = k_stock_prices_df.iloc[::-1][::5][::-1]
+        #k_stock_prices_df_frequency_adjusted = k_stock_prices_df.iloc[::-1][::5][::-1]
+        k_stock_prices_df_frequency_adjusted = k_stock_prices_df
     elif portfolio_spec["rebalancing_frequency"] == "monthly":
-        k_stock_prices_df_frequency_adjusted = k_stock_prices_df.iloc[::-1][::21][::-1]
+        #k_stock_prices_df_frequency_adjusted = k_stock_prices_df.iloc[::-1][::21][::-1]
+        k_stock_prices_df_frequency_adjusted = k_stock_prices_df
     else:
         logger.error("Unknown rebalancing frequency.")
         raise RuntimeError("Unknown rebalancing frequency.")
@@ -323,14 +329,14 @@ def calculate_conjugate_prior_S(portfolio_spec,
     hf_start_date = trading_date_ts - pd.Timedelta(days=days_between_rebalancing)
     filtered_intraday_prices_df = k_stock_intraday_prices_df[(k_stock_intraday_prices_df.index > (hf_start_date + pd.Timedelta(days=1))) &
                                                             (k_stock_intraday_prices_df.index <= (trading_date_ts + pd.Timedelta(days=1)))]
-    k_stock_intraday_log_returns_last_week = np.log(filtered_intraday_prices_df / filtered_intraday_prices_df.shift(1)).dropna()
+    k_stock_intraday_log_returns_last_period = np.log(filtered_intraday_prices_df / filtered_intraday_prices_df.shift(1)).dropna()
 
     # Compute the covariance matrix of the log returns, scaled by the number of observations
-    k_stock_intraday_cov_last_week = k_stock_intraday_log_returns_last_week.cov() * len(
-        k_stock_intraday_log_returns_last_week)
+    k_stock_intraday_cov_last_period = k_stock_intraday_log_returns_last_period.cov() * len(
+        k_stock_intraday_log_returns_last_period)
 
     # Return the scaled covariance matrix
-    return conjugate_prior_n * k_stock_intraday_cov_last_week
+    return conjugate_prior_n * k_stock_intraday_cov_last_period
 
 
 def calculate_conjugate_posterior_S(portfolio_spec,
@@ -667,6 +673,7 @@ def get_k_largest_stocks_market_caps(stock_market_caps_df,
     eligible_stocks = [
         stock for stock in stock_prices_df.columns
         if (
+                stock in tickers_list and
                 stock in stock_market_caps_df.columns and
                 stock in stock_intraday_prices_df.columns and
                 stock_prices_df.loc[trading_date_ts, stock] is not None and

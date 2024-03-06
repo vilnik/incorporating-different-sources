@@ -344,59 +344,58 @@ def full_evaluation(portfolio_setups_simple_returns_df,
         # Add portfolio_excess_simple_returns_series to the new DataFrame
         portfolio_setups_excess_simple_returns_df[column_name] = portfolio_excess_simple_returns_series
 
-    # Performance metrics for "tc=1" and optionally "ra=5"
+    # Performance metrics for "tc=5" and optionally "ra=1"
     performance_metrics(portfolio_setups_simple_returns_df,
                      portfolio_setups_excess_simple_returns_df,
                     portfolio_setups_turnover,
-                     5,
-                     1)
+                     1,
+                     5)
 
-    # Performance metrics for "tc=3" and optionally "ra=5"
+    # Performance metrics for "tc=5" and optionally "ra=2"
     performance_metrics(portfolio_setups_simple_returns_df,
                      portfolio_setups_excess_simple_returns_df,
                     portfolio_setups_turnover,
-                     5,
-                     3)
+                     2,
+                     5)
 
-    # Performance metrics for "tc=1" and optionally "ra=10"
+    # Performance metrics for "tc=15" and optionally "ra=1"
     performance_metrics(portfolio_setups_simple_returns_df,
                      portfolio_setups_excess_simple_returns_df,
                      portfolio_setups_turnover,
-                     10,
-                     1)
+                     1,
+                     15)
 
-    # Performance metrics for "tc=3" and optionally "ra=10"
+    # Performance metrics for "tc=15" and optionally "ra=2"
     performance_metrics(portfolio_setups_simple_returns_df,
                      portfolio_setups_excess_simple_returns_df,
                      portfolio_setups_turnover,
-                     10,
-                     3)
+                     2,
+                     15)
 
-
-
-    # Plot performance for "tc=1" and optionally "ra=5"
+    # Plot performance for "tc=5" and optionally "ra=1"
     plot_performance(portfolio_setups_simple_returns_df,
                      portfolio_setups_excess_simple_returns_df,
-                     5,
-                     1)
+                     1,
+                     5)
 
-    # Plot performance for "tc=3" and optionally "ra=5"
+    # Plot performance for "tc=5" and optionally "ra=2"
     plot_performance(portfolio_setups_simple_returns_df,
                      portfolio_setups_excess_simple_returns_df,
-                     5,
-                     3)
+                     2,
+                     5)
 
-    # Plot performance for "tc=1" and optionally "ra=10"
+    # Plot performance for "tc=15" and optionally "ra=1"
     plot_performance(portfolio_setups_simple_returns_df,
                      portfolio_setups_excess_simple_returns_df,
-                     10,
-                     1)
+                     1,
+                     15)
 
-    # Plot performance for "tc=3" and optionally "ra=10"
+    # Plot performance for "tc=15" and optionally "ra=2"
     plot_performance(portfolio_setups_simple_returns_df,
                      portfolio_setups_excess_simple_returns_df,
-                     10,
-                     3)
+                     2,
+                     15)
+
 
     plot_vix_and_sp500(filtered_vix_prices_df,
                        filtered_sp500_simple_returns_df)
