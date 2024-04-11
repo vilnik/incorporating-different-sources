@@ -26,69 +26,139 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 # Get the parent directory of the script's directory
 parent_dir = os.path.dirname(script_dir)
 
+# Check calculations
+CHECK = True
 def calculate_excess_log_returns_from_prices(portfolio_spec,
                                              stock_prices_df,
                                              risk_free_rate_df):
-    logger.info(f"Calculating excess log returns.")
+    logger.info("Calculating excess log returns.")
 
     # Calculate the log returns for each stock
     stock_log_returns_df = np.log(stock_prices_df / stock_prices_df.shift(1))
 
-    # Adjust risk-free rate for rebalancing frequency
-    risk_free_rate_adjusted = (1 + risk_free_rate_df) ** (1 / 252) - 1
+    # Calculate the actual frequency of stock log returns in days
+    dates_diff = stock_prices_df.index.to_series().diff().dt.days.dropna()
+    average_frequency_stock_log_returns = dates_diff.mean()
+
+    # Ensure the max diff is not significantly greater than the average
+    assert dates_diff.max() <= average_frequency_stock_log_returns + 4, "Unexpected large gap between return dates."
+
+    # Adjust the risk-free rate for the observed frequency
+    # Assuming risk_free_rate_df contains annualized risk-free rates
+    risk_free_rate_adjusted = (1 + risk_free_rate_df) ** (average_frequency_stock_log_returns / 365) - 1
+
+    # Ensure risk_free_rate_adjusted index aligns with risk_free_rate_df for correct operations
+    risk_free_rate_adjusted.index = risk_free_rate_df.index
 
     # Resample and interpolate risk-free rates to match stock returns' dates
-    risk_free_rate_resampled = risk_free_rate_adjusted.reindex(stock_log_returns_df.index, method='ffill')
+    risk_free_rate_resampled = risk_free_rate_adjusted.reindex(stock_log_returns_df.index, method = 'ffill')
 
     # Calculate the excess log returns
     stock_excess_log_returns_df = stock_log_returns_df - risk_free_rate_resampled.values
 
     # Drop NaN values, which occur for the first data point
-    stock_excess_log_returns_df.dropna(inplace=True)
+    stock_excess_log_returns_df.dropna(inplace = True)
 
     return stock_excess_log_returns_df
 
-def calculate_portfolio_variance(portfolio_comp_df, 
+def calculate_portfolio_variance(portfolio_weights_df,
                                  covariance_matrix_df):
     logger.info(f"Calculating portfolio variance.")
 
     # Sort the portfolio DataFrame by index (stock symbols)
-    sorted_portfolio_comp_df = portfolio_comp_df.sort_index()
-    sorted_weights_np = sorted_portfolio_comp_df['Weight'].to_numpy()
+    sorted_portfolio_weights_df = portfolio_weights_df.sort_index()
+    sorted_weights_np = sorted_portfolio_weights_df['Weight'].to_numpy()
 
     # Sort the covariance DataFrame by stock symbols and convert to a numpy array
-    sorted_keys = sorted_portfolio_comp_df.index
+    sorted_keys = sorted_portfolio_weights_df.index
     sorted_covariance_matrix_df = covariance_matrix_df.loc[sorted_keys, sorted_keys]
     sorted_covariance_matrix_np = sorted_covariance_matrix_df.to_numpy()
 
     # Compute the portfolio variance as w^T * S * w
     portfolio_variance = np.dot(sorted_weights_np.T, np.dot(sorted_covariance_matrix_np, sorted_weights_np))
-    # Same as portfolio_comp_df["Weight"].T.dot(covariance_matrix_df.dot(portfolio_comp_df["Weight"]))
+
+    # Check calculations
+    if CHECK:
+        portfolio_variance_check = portfolio_weights_df["Weight"].T.dot(covariance_matrix_df.dot(portfolio_weights_df["Weight"]))
+
+        is_close = np.isclose(portfolio_variance, portfolio_variance_check, atol = 1e-4)
+        if not is_close:
+            raise ValueError(f"Portfolio variance is not consistent.")
 
     return portfolio_variance
 
+def calculate_average_mcm_window(portfolio_spec,
+                                trading_date_ts,
+                                mcm_prices_df):
 
-def daily_prices_window_adjusted(portfolio_spec,
-                             trading_date_ts,
-                             k_stock_prices_df):
-    logger.info(f"Adjusting daily prices to rolling window.")
+    # Ensure k_stock_prices_df.index is a DateTimeIndex and is sorted
+    mcm_prices_df = mcm_prices_df.sort_index()
 
-    # Find the position of the current trading date in the adjusted DataFrame
-    position_current_date = k_stock_prices_df.index.get_loc(trading_date_ts)
+    # Check if trading_date_ts is the last date in mcm_prices_df
+    if trading_date_ts != mcm_prices_df.index[-1]:
+        logger.error(f"trading_date_ts {trading_date_ts} is not the last date in the DataFrame.")
+        raise ValueError(f"trading_date_ts {trading_date_ts} must be the last date in the DataFrame.")
 
-    # Calculate the start position for the rolling window
-    start_position = position_current_date - (portfolio_spec["rolling_window_days"] - 1)
+    if portfolio_spec["rolling_window_frequency"] == "daily":
+        mcm_prices_window_df = mcm_prices_df
+    elif portfolio_spec["rolling_window_frequency"] == "weekly":
+        # Resample to get the last trading day of each week
+        mcm_prices_window_df = mcm_prices_df.resample('W').last()
+    elif portfolio_spec["rolling_window_frequency"] == "monthly":
+        # Resample to get the last trading day of each month
+        mcm_prices_window_df = mcm_prices_df.resample('M').last()
 
-    # Check for invalid start position
-    if start_position < 0:
-        logger.error(f"Start position is smaller than 0.")
-        raise ValueError(f"Start position is smaller than 0.")
+    # Calculate the average mcm price over the specified rolling window
+    average_mcm_price = mcm_prices_window_df.iloc[-portfolio_spec["rolling_window"]:].mean().item()
 
-    # Slice the DataFrame to only include data within the rolling window
-    k_stock_prices_window_adjusted_df = k_stock_prices_df.iloc[start_position:position_current_date + 1]
+    return average_mcm_price
 
-    return k_stock_prices_window_adjusted_df
+def get_window_annualization_factor(portfolio_spec):
+    if portfolio_spec["rolling_window_frequency"] == "daily":
+        window_annualization_factor= 252
+    elif portfolio_spec["rolling_window_frequency"] == "weekly":
+        window_annualization_factor = 52
+    elif portfolio_spec["rolling_window_frequency"] == "monthly":
+        window_annualization_factor = 12
 
+    return window_annualization_factor
+
+def get_window_trading_days(portfolio_spec):
+    if portfolio_spec["rolling_window_frequency"] == "daily":
+        window_days = portfolio_spec["rolling_window"]
+    elif portfolio_spec["rolling_window_frequency"] == "weekly":
+        window_days = portfolio_spec["rolling_window"]*5
+    elif portfolio_spec["rolling_window_frequency"] == "monthly":
+        window_days = portfolio_spec["rolling_window"]*22
+
+    return window_days
+
+def adjust_stock_prices_window(portfolio_spec,
+                               trading_date_ts,
+                               k_stock_prices_df):
+    logger.info("Adjusting daily prices to rolling window.")
+
+    # Ensure k_stock_prices_df.index is a DateTimeIndex and is sorted
+    k_stock_prices_df = k_stock_prices_df.sort_index()
+
+    # Check if trading_date_ts is the last date in k_stock_prices_df
+    if trading_date_ts != k_stock_prices_df.index[-1]:
+        logger.error(f"trading_date_ts {trading_date_ts} is not the last date in the DataFrame.")
+        raise ValueError(f"trading_date_ts {trading_date_ts} must be the last date in the DataFrame.")
+
+    if portfolio_spec["rolling_window_frequency"] == "daily":
+        k_stock_prices_window_df = k_stock_prices_df
+    elif portfolio_spec["rolling_window_frequency"] == "weekly":
+        # Resample to get the last trading day of each week
+        k_stock_prices_window_df = k_stock_prices_df.resample('W').last()
+    elif portfolio_spec["rolling_window_frequency"] == "monthly":
+        # Resample to get the last trading day of each month
+        k_stock_prices_window_df = k_stock_prices_df.resample('M').last()
+
+    # Select the last 'rolling_window' observations from the DataFrame
+    k_stock_prices_window_df = k_stock_prices_window_df.iloc[-portfolio_spec["rolling_window"]:]
+
+    return k_stock_prices_window_df
 
 def calculate_canonical_statistics_T(portfolio_spec,
                                      trading_date_ts,
@@ -97,19 +167,39 @@ def calculate_canonical_statistics_T(portfolio_spec,
     logger.info(f"Calculating canonical statistics T.")
 
     # Adjust the stock prices DataFrame based on rolling window
-    k_stock_prices_window_adjusted_df = daily_prices_window_adjusted(
+    k_stock_prices_window_df = adjust_stock_prices_window(
         portfolio_spec, trading_date_ts, k_stock_prices_df
     )
 
     # Calculate the excess log returns for the adjusted stock prices
-    k_stock_excess_log_returns_window_adjusted = calculate_excess_log_returns_from_prices(
-        portfolio_spec, k_stock_prices_window_adjusted_df, risk_free_rate_df
+    k_stock_excess_log_returns_window_df = calculate_excess_log_returns_from_prices(
+        portfolio_spec, k_stock_prices_window_df, risk_free_rate_df
     )
 
     # Calculate Canonical Statistics T using DataFrame's dot product method
-    canonical_statistics_T_df = k_stock_excess_log_returns_window_adjusted.T.dot(
-        k_stock_excess_log_returns_window_adjusted
+    canonical_statistics_T_df = k_stock_excess_log_returns_window_df.T.dot(
+        k_stock_excess_log_returns_window_df
     )
+
+    # Check calculations
+    if CHECK:
+        num_columns = k_stock_excess_log_returns_window_df.shape[1]
+        canonical_statistics_T_matrix_check = np.zeros((num_columns, num_columns))
+        for index, row in k_stock_excess_log_returns_window_df.iterrows():
+            xi = row.values
+            canonical_statistics_T_matrix_check += np.outer(xi, xi)
+
+        # Convert the numpy matrix to a DataFrame
+        canonical_statistics_T_df_check = pd.DataFrame(canonical_statistics_T_matrix_check)
+
+        # Set the row and column labels to match those from k_stock_excess_log_returns_window_df
+        canonical_statistics_T_df_check.columns = k_stock_excess_log_returns_window_df.columns
+        canonical_statistics_T_df_check.index = k_stock_excess_log_returns_window_df.columns
+
+        are_equal = np.isclose(canonical_statistics_T_df, canonical_statistics_T_df_check, rtol = 1e-4,
+                                      atol = 1e-4).all().all()
+        if not are_equal:
+            raise ValueError(f"Canonical statistics T is not consistent.")
 
     return canonical_statistics_T_df
 
@@ -119,54 +209,66 @@ def calculate_canonical_statistics_t(portfolio_spec,
                                      risk_free_rate_df):
     logger.info(f"Calculating canonical statistics t.")
 
-    # Adjust the stock prices DataFrame based on the portfolio's rebalancing frequency and rolling window
-    k_stock_prices_window_adjusted_df = daily_prices_window_adjusted(
+    # Adjust the stock prices DataFrame based on rolling window
+    k_stock_prices_window_df = adjust_stock_prices_window(
         portfolio_spec, trading_date_ts, k_stock_prices_df
     )
 
     # Calculate the excess log returns for the adjusted stock prices
-    k_stock_excess_log_returns_window_adjusted = calculate_excess_log_returns_from_prices(
-        portfolio_spec, k_stock_prices_window_adjusted_df, risk_free_rate_df)
+    k_stock_excess_log_returns_window_df = calculate_excess_log_returns_from_prices(
+        portfolio_spec, k_stock_prices_window_df, risk_free_rate_df)
 
     # Calculate Canonical Statistics t using DataFrame's sum method
-    canonical_statistics_t_df = k_stock_excess_log_returns_window_adjusted.sum(axis=0).to_frame()
+    canonical_statistics_t_df = k_stock_excess_log_returns_window_df.sum(axis=0).to_frame()
+
+    # Check calculations
+    if CHECK:
+        num_columns = k_stock_excess_log_returns_window_df.shape[1]
+        canonical_statistics_t_vector_check = np.zeros(num_columns)
+        for index, row in k_stock_excess_log_returns_window_df.iterrows():
+            xi = row.values
+            canonical_statistics_t_vector_check += xi
+
+        # Convert the numpy vector to a DataFrame
+        canonical_statistics_t_df_check = pd.DataFrame(canonical_statistics_t_vector_check)
+
+        # Set the row labels to match those from k_stock_excess_log_returns_window_df
+        canonical_statistics_t_df_check.index = k_stock_excess_log_returns_window_df.columns
+
+        are_equal = np.isclose(canonical_statistics_t_df, canonical_statistics_t_df_check, rtol = 1e-4,
+                                      atol = 1e-4).all().all()
+
+        if not are_equal:
+            raise ValueError(f"Canonical statistics t is not consistent.")
+
 
     return canonical_statistics_t_df
 
 def calculate_conjugate_prior_n(portfolio_spec,
                                 trading_date_ts,
-                                vix_prices_df,
-                                risk_free_rate_df):
+                                mcm_prices_df):
     logger.info(f"Calculating conjugate prior n.")
 
-    if portfolio_spec["prior_n"] == "vix_scaling":
-        # Calculate the average VIX price over the specified rolling window
-        average_vix_price = vix_prices_df[-portfolio_spec["rolling_window_days"]:].mean().item()
+    average_mcm_price = calculate_average_mcm_window(portfolio_spec,
+                                                     trading_date_ts,
+                                                     mcm_prices_df)
 
-        # Get the current VIX price for the trading date
-        current_vix_price = vix_prices_df.loc[trading_date_ts].item()
+    # Get the current mcm price for the trading date
+    current_mcm_price = mcm_prices_df.loc[trading_date_ts].item()
 
-        # Calculate the VIX price fraction based on current and average VIX prices
-        if current_vix_price > average_vix_price:
-            vix_price_fraction = (current_vix_price / average_vix_price)**portfolio_spec["h_l"][0]
-        else:
-            vix_price_fraction = (average_vix_price / current_vix_price)**portfolio_spec["h_l"][1]
-
-        conjugate_prior_n = portfolio_spec["rolling_window_days"] * vix_price_fraction
-    elif portfolio_spec["prior_n"] == "certain":
-        conjugate_prior_n = 1e30
-    elif isinstance(portfolio_spec["prior_n"], int):
-        conjugate_prior_n = portfolio_spec["prior_n"]
+    # Calculate the mcm price fraction based on current and average mcm prices
+    if current_mcm_price > average_mcm_price:
+        mcm_price_fraction = (current_mcm_price / average_mcm_price)
     else:
-        logger.error(f"Unknown conjugate prior n specification.")
-        raise ValueError(f"Unknown conjugate prior n specification.")
+        mcm_price_fraction = (average_mcm_price / current_mcm_price)
+
+    conjugate_prior_n = portfolio_spec["rolling_window"] * mcm_price_fraction * portfolio_spec["mcm_scaling"]
 
     return conjugate_prior_n
 
 def calculate_conjugate_posterior_n(portfolio_spec,
                                     trading_date_ts,
-                                    vix_prices_df,
-                                    risk_free_rate_df,
+                                    mcm_prices_df,
                                     conjugate_prior_n=None):
     logger.info(f"Calculating conjugate posterior n.")
 
@@ -174,18 +276,16 @@ def calculate_conjugate_posterior_n(portfolio_spec,
     if conjugate_prior_n is None:
         conjugate_prior_n = calculate_conjugate_prior_n(portfolio_spec,
                                                         trading_date_ts,
-                                                        vix_prices_df,
-                                                        risk_free_rate_df)
+                                                        mcm_prices_df)
 
     # Return the sum of the conjugate prior 'n' and the adjusted rolling window
-    return conjugate_prior_n + portfolio_spec["rolling_window_days"]
+    return conjugate_prior_n + portfolio_spec["rolling_window"]
 
 
 def calculate_conjugate_prior_S(portfolio_spec,
                                 trading_date_ts,
                                 k_stock_intraday_prices_df,
-                                vix_prices_df,
-                                risk_free_rate_df,
+                                mcm_prices_df,
                                 conjugate_prior_n=None):
     logger.info(f"Calculating conjugate prior S.")
 
@@ -193,39 +293,50 @@ def calculate_conjugate_prior_S(portfolio_spec,
     if conjugate_prior_n is None:
         conjugate_prior_n = calculate_conjugate_prior_n(portfolio_spec,
                                                         trading_date_ts,
-                                                        vix_prices_df,
-                                                        risk_free_rate_df)
+                                                        mcm_prices_df)
 
     # Calculate log returns for the last period of intraday prices
-    if portfolio_spec["rebalancing_frequency"] == "daily":
-        days_between_rebalancing = 1
-    elif portfolio_spec["rebalancing_frequency"] == "weekly":
-        days_between_rebalancing = 7
-    elif portfolio_spec["rebalancing_frequency"] == "monthly":
-        days_between_rebalancing = 31
+    if portfolio_spec["rolling_window_frequency"] == "daily":
+        days_in_single_rolling_window = 1
+    elif portfolio_spec["rolling_window_frequency"] == "weekly":
+        days_in_single_rolling_window = 7
+    elif portfolio_spec["rolling_window_frequency"] == "monthly":
+        days_in_single_rolling_window = 31
     else:
         # Log an error and raise an exception if the rebalancing frequency is unknown
-        logger.error("Unknown rebalancing frequency.")
-        raise RuntimeError("Unknown rebalancing frequency.")
+        logger.error("Unknown rolling window frequency.")
+        raise RuntimeError("Unknown rolling window frequency.")
 
-    hf_start_date = trading_date_ts - pd.Timedelta(days=days_between_rebalancing)
+    hf_start_date = trading_date_ts - pd.Timedelta(days=days_in_single_rolling_window)
     filtered_intraday_prices_df = k_stock_intraday_prices_df[(k_stock_intraday_prices_df.index > (hf_start_date + pd.Timedelta(days=1))) &
                                                             (k_stock_intraday_prices_df.index <= (trading_date_ts + pd.Timedelta(days=1)))]
-    k_stock_intraday_log_returns_last_period = np.log(filtered_intraday_prices_df / filtered_intraday_prices_df.shift(1)).dropna()
+
+    k_stock_intraday_log_returns_last_period_df = np.log(filtered_intraday_prices_df / filtered_intraday_prices_df.shift(1)).dropna()
 
     # Compute the covariance matrix of the log returns, scaled by the number of observations
-    k_stock_intraday_cov_last_period = k_stock_intraday_log_returns_last_period.cov() * len(
-        k_stock_intraday_log_returns_last_period)
+    k_stock_intraday_cov_last_period_df = k_stock_intraday_log_returns_last_period_df.cov() * len(
+        k_stock_intraday_log_returns_last_period_df)
+
+    # Check calculations
+    if CHECK:
+        k_stock_intraday_cov_last_period_df_check = k_stock_intraday_log_returns_last_period_df.T.dot(
+            k_stock_intraday_log_returns_last_period_df
+        )
+
+        are_equal = np.isclose(k_stock_intraday_cov_last_period_df, k_stock_intraday_cov_last_period_df_check, rtol = 1e-3,
+                                      atol = 1e-3).all().all()
+
+        if not are_equal:
+            raise ValueError(f"Realized covariance matrix is not consistent.")
 
     # Return the scaled covariance matrix
-    return conjugate_prior_n * k_stock_intraday_cov_last_period
-
+    return conjugate_prior_n * k_stock_intraday_cov_last_period_df
 
 def calculate_conjugate_posterior_S(portfolio_spec,
                                     trading_date_ts,
                                     k_stock_prices_df,
                                     k_stock_intraday_prices_df,
-                                    vix_prices_df,
+                                    mcm_prices_df,
                                     risk_free_rate_df,
                                     conjugate_prior_S_df=None):
     logger.info(f"Calculating conjugate posterior S.")
@@ -235,8 +346,7 @@ def calculate_conjugate_posterior_S(portfolio_spec,
         conjugate_prior_S_df = calculate_conjugate_prior_S(portfolio_spec,
                                                            trading_date_ts,
                                                            k_stock_intraday_prices_df,
-                                                           vix_prices_df,
-                                                           risk_free_rate_df)
+                                                           mcm_prices_df)
 
     # Calculate the Canonical Statistics T matrix
     canonical_statistics_T_df = calculate_canonical_statistics_T(portfolio_spec,
@@ -252,52 +362,29 @@ def calculate_conjugate_prior_w(portfolio_spec,
                                 trading_date_ts,
                                 k_stock_prices_df,
                                 k_stock_market_caps_df,
-                                vix_prices_df,
-                                risk_free_rate_df):
+                                mcm_prices_df):
     logger.info(f"Calculating conjugate prior w.")
 
-    # Count the number of stocks in the portfolio
-    num_stocks = len(k_stock_prices_df.columns)
-
-    # Calculate the average VIX price over the specified rolling window
-    average_vix_price = vix_prices_df[-portfolio_spec["rolling_window_days"]:].mean().item()
-
-    # Get the current VIX price for the trading date
-    current_vix_price = vix_prices_df.loc[trading_date_ts].item()
-
-    # Calculate the VIX price fraction based on current and average VIX prices
-    if current_vix_price > average_vix_price:
-        prior_weights = portfolio_spec["prior_weights_h_l"][0]
-    else:
-        prior_weights = portfolio_spec["prior_weights_h_l"][1]
-
     # Initialize weights for each stock
-    if prior_weights == "empty":
-        portfolio_comp_df = pd.DataFrame({
-            'Weight': [0] * num_stocks
-        }, index=k_stock_prices_df.columns)
-
-        portfolio_comp_df.index.name = 'Stock'
-    elif prior_weights == "value_weighted":
-        portfolio_comp_df = calculate_value_weighted_portfolio(portfolio_spec,
+    if "vw" in portfolio_spec["weighting_strategy"]:
+        portfolio_weights_df = calculate_value_weighted_portfolio(portfolio_spec,
                                                                trading_date_ts,
                                                                k_stock_market_caps_df)
-    elif prior_weights == "equally_weighted":
-        portfolio_comp_df = calculate_equally_weighted_portfolio(portfolio_spec,
+    elif "ew" in portfolio_spec["weighting_strategy"]:
+        portfolio_weights_df = calculate_equally_weighted_portfolio(portfolio_spec,
                                                                  k_stock_prices_df)
     else:
         logger.error(f"Unknown conjugate portfolio prior weights.")
         raise ValueError("Unknown conjugate portfolio prior weights.")
 
-    return portfolio_comp_df
+    return portfolio_weights_df
 
 def calculate_conjugate_c(portfolio_spec,
                           trading_date_ts,
                           k_stock_prices_df,
                           k_stock_market_caps_df,
                           k_stock_intraday_prices_df,
-                          vix_prices_df,
-                          risk_free_rate_df,
+                          mcm_prices_df,
                           conjugate_prior_n=None,
                           conjugate_prior_S_df=None,
                           conjugate_prior_w_df=None):
@@ -307,16 +394,14 @@ def calculate_conjugate_c(portfolio_spec,
     if conjugate_prior_n is None:
         conjugate_prior_n = calculate_conjugate_prior_n(portfolio_spec,
                                                         trading_date_ts,
-                                                        vix_prices_df,
-                                                         risk_free_rate_df)
+                                                        mcm_prices_df)
 
     # Calculate 'conjugate_prior_S_df' if not provided
     if conjugate_prior_S_df is None:
         conjugate_prior_S_df = calculate_conjugate_prior_S(portfolio_spec,
                                                            trading_date_ts,
                                                            k_stock_intraday_prices_df,
-                                                           vix_prices_df,
-                                                           risk_free_rate_df)
+                                                           mcm_prices_df)
 
     # Calculate 'conjugate_prior_w_df' if not provided
     if conjugate_prior_w_df is None:
@@ -324,14 +409,23 @@ def calculate_conjugate_c(portfolio_spec,
                                                             trading_date_ts,
                                                             k_stock_prices_df,
                                                             k_stock_market_caps_df,
-                                                            vix_prices_df,
-                                                            risk_free_rate_df)
+                                                            mcm_prices_df)
 
     # Compute 'conjugate_c' using the provided formulas
-    conjugate_c = (2 * conjugate_prior_n) / ((conjugate_prior_n + portfolio_spec["portfolio_size"] + 2) +
-                                      ((conjugate_prior_n + portfolio_spec["portfolio_size"] + 2) ** 2 +
+    conjugate_c = (2 * conjugate_prior_n) / ((conjugate_prior_n + portfolio_spec["size"] + 2) +
+                                      ((conjugate_prior_n + portfolio_spec["size"] + 2) ** 2 +
                                       4 * conjugate_prior_n * calculate_portfolio_variance(conjugate_prior_w_df,
                                                                                            conjugate_prior_S_df)) ** (1 / 2))
+
+    if CHECK:
+        conjugate_c_check = (-(conjugate_prior_n + portfolio_spec["size"] + 2) + \
+                            ((conjugate_prior_n + portfolio_spec["size"] + 2)**2 + 4*conjugate_prior_n*calculate_portfolio_variance(conjugate_prior_w_df,
+                                                                                           conjugate_prior_S_df))**(1/2)) / \
+                            (2*calculate_portfolio_variance(conjugate_prior_w_df,conjugate_prior_S_df))
+
+        is_close = np.isclose(conjugate_c, conjugate_c_check, atol = 1e-3)
+        if not is_close:
+            raise ValueError(f"Portfolio c is not consistent.")
 
     return conjugate_c
 
@@ -340,7 +434,7 @@ def calculate_conjugate_posterior_w(portfolio_spec,
                                     k_stock_prices_df,
                                     k_stock_market_caps_df,
                                     k_stock_intraday_prices_df,
-                                    vix_prices_df,
+                                    mcm_prices_df,
                                     risk_free_rate_df,
                                     conjugate_c=None,
                                     conjugate_prior_w_df=None,
@@ -355,8 +449,7 @@ def calculate_conjugate_posterior_w(portfolio_spec,
                                             k_stock_prices_df,
                                             k_stock_market_caps_df,
                                             k_stock_intraday_prices_df,
-                                            vix_prices_df,
-                                            risk_free_rate_df)
+                                            mcm_prices_df)
 
     # Calculate 'conjugate_prior_w_df' if not provided
     if conjugate_prior_w_df is None:
@@ -364,8 +457,7 @@ def calculate_conjugate_posterior_w(portfolio_spec,
                                                             trading_date_ts,
                                                             k_stock_prices_df,
                                                             k_stock_market_caps_df,
-                                                            vix_prices_df,
-                                                            risk_free_rate_df)
+                                                            mcm_prices_df)
 
     # Calculate 'conjugate_posterior_S_df' if not provided
     if conjugate_posterior_S_df is None:
@@ -373,14 +465,13 @@ def calculate_conjugate_posterior_w(portfolio_spec,
             conjugate_prior_S_df = calculate_conjugate_prior_S(portfolio_spec,
                                                                trading_date_ts,
                                                                k_stock_intraday_prices_df,
-                                                               vix_prices_df,
-                                                               risk_free_rate_df)
+                                                               mcm_prices_df)
 
         conjugate_posterior_S_df = calculate_conjugate_posterior_S(portfolio_spec,
                                                                    trading_date_ts,
                                                                    k_stock_prices_df,
                                                                    k_stock_intraday_prices_df,
-                                                                   vix_prices_df,
+                                                                   mcm_prices_df,
                                                                    risk_free_rate_df,
                                                                    conjugate_prior_S_df=conjugate_prior_S_df)
 
@@ -410,7 +501,7 @@ def calculate_mean_conjugate_posterior_nu(portfolio_spec,
                                           k_stock_prices_df,
                                           k_stock_market_caps_df,
                                           k_stock_intraday_prices_df,
-                                          vix_prices_df,
+                                          mcm_prices_df,
                                           risk_free_rate_df,
                                           conjugate_c=None,
                                           conjugate_prior_n=None,
@@ -429,20 +520,17 @@ def calculate_mean_conjugate_posterior_nu(portfolio_spec,
                                             k_stock_prices_df,
                                             k_stock_market_caps_df,
                                             k_stock_intraday_prices_df,
-                                            vix_prices_df,
-                                            risk_free_rate_df)
+                                            mcm_prices_df)
 
     # Calculate 'conjugate_posterior_n' if not provided
     if conjugate_posterior_n is None:
         if conjugate_prior_n is None:
             conjugate_prior_n = calculate_conjugate_prior_n(portfolio_spec,
                                                             trading_date_ts,
-                                                            vix_prices_df,
-                                                            risk_free_rate_df)
+                                                            mcm_prices_df)
         conjugate_posterior_n = calculate_conjugate_posterior_n(portfolio_spec,
                                                                 trading_date_ts,
-                                                                vix_prices_df,
-                                                                risk_free_rate_df,
+                                                                mcm_prices_df,
                                                                 conjugate_prior_n=conjugate_prior_n)
 
     # Calculate 'conjugate_posterior_S_df' if not provided
@@ -451,13 +539,12 @@ def calculate_mean_conjugate_posterior_nu(portfolio_spec,
             conjugate_prior_S_df = calculate_conjugate_prior_S(portfolio_spec,
                                                                trading_date_ts,
                                                                k_stock_intraday_prices_df,
-                                                               vix_prices_df,
-                                                               risk_free_rate_df)
+                                                               mcm_prices_df)
         conjugate_posterior_S_df = calculate_conjugate_posterior_S(portfolio_spec,
                                                                    trading_date_ts,
                                                                    k_stock_prices_df,
                                                                    k_stock_intraday_prices_df,
-                                                                   vix_prices_df,
+                                                                   mcm_prices_df,
                                                                    risk_free_rate_df,
                                                                    conjugate_prior_S_df=conjugate_prior_S_df)
 
@@ -468,14 +555,13 @@ def calculate_mean_conjugate_posterior_nu(portfolio_spec,
                                                                 trading_date_ts,
                                                                 k_stock_prices_df,
                                                                 k_stock_market_caps_df,
-                                                                vix_prices_df,
-                                                               risk_free_rate_df)
+                                                                mcm_prices_df)
         conjugate_posterior_w_df = calculate_conjugate_posterior_w(portfolio_spec,
                                                                 trading_date_ts,
                                                                 k_stock_prices_df,
                                                                 k_stock_market_caps_df,
                                                                 k_stock_intraday_prices_df,
-                                                                vix_prices_df,
+                                                                mcm_prices_df,
                                                                 risk_free_rate_df,
                                                                 conjugate_c=conjugate_c,
                                                                 conjugate_prior_w_df=conjugate_prior_w_df,
@@ -483,7 +569,7 @@ def calculate_mean_conjugate_posterior_nu(portfolio_spec,
                                                                 conjugate_posterior_S_df=conjugate_posterior_S_df)
 
     # Compute and return the mean conjugate posterior nu
-    mean_conjugate_posterior_nu_df = (conjugate_posterior_n + portfolio_spec["portfolio_size"] + 2) * \
+    mean_conjugate_posterior_nu_df = (conjugate_posterior_n + portfolio_spec["size"] + 2) * \
                                   conjugate_posterior_w_df / (conjugate_posterior_n -
                                                            calculate_portfolio_variance(conjugate_posterior_w_df,
                                                                                         conjugate_posterior_S_df))
@@ -511,7 +597,7 @@ def calculate_mean_jeffreys_posterior_nu(portfolio_spec,
 
 
     # Compute and return the mean Jeffreys posterior nu
-    jeffreys_scaled_covariance_matrix_df = (canonical_statistics_T_df - 1 / portfolio_spec["rolling_window_days"] * \
+    jeffreys_scaled_covariance_matrix_df = (canonical_statistics_T_df - 1 / portfolio_spec["rolling_window"] * \
                                     canonical_statistics_t_df.dot(canonical_statistics_t_df.T))
     jeffreys_scaled_covariance_matrix_inv_df = pd.DataFrame(np.linalg.inv(jeffreys_scaled_covariance_matrix_df.values),
                                      index=jeffreys_scaled_covariance_matrix_df.columns,
@@ -528,7 +614,7 @@ def get_k_largest_stocks_market_caps(stock_market_caps_df,
                                      trading_date_ts,
                                      portfolio_size,
                                      rolling_window_days,
-                                     rebalancing_frequency):
+                                     rolling_window_frequency):
     # Get S&P 500 components for the current date
     tickers_list = data_handling.extract_unique_tickers(trading_date_ts,
                                           trading_date_ts)
@@ -538,17 +624,17 @@ def get_k_largest_stocks_market_caps(stock_market_caps_df,
     missing_fraction = (len(tickers_list) - len(present_tickers)) / len(tickers_list)
     logger.info(f"Fraction of tickers missing from stock_market_caps_df: {missing_fraction:.2%}")
 
-    # Days since last rebalancing
-    if rebalancing_frequency == "daily":
-        days_between_rebalancing = 1
-    elif rebalancing_frequency == "weekly":
-        days_between_rebalancing = 7
-    elif rebalancing_frequency == "monthly":
-        days_between_rebalancing = 31
+    # Days in single rolling window
+    if rolling_window_frequency == "daily":
+        days_in_single_rolling_window = 1
+    elif rolling_window_frequency == "weekly":
+        days_in_single_rolling_window = 7
+    elif rolling_window_frequency == "monthly":
+        days_in_single_rolling_window = 31
     else:
         # Log an error and raise an exception if the rebalancing frequency is unknown
-        logger.error("Unknown rebalancing frequency.")
-        raise RuntimeError("Unknown rebalancing frequency.")
+        logger.error("Unknown rolling window frequency.")
+        raise RuntimeError("Unknown rolling window frequency.")
 
     eligible_stocks = [
         stock for stock in stock_prices_df.columns
@@ -558,11 +644,11 @@ def get_k_largest_stocks_market_caps(stock_market_caps_df,
                 stock in stock_intraday_prices_df.columns and
                 stock_prices_df.loc[trading_date_ts, stock] is not None and
                 stock_prices_df[stock].loc[:trading_date_ts].tail(rolling_window_days).notna().all() and
-                stock_intraday_prices_df[stock].loc[(trading_date_ts - timedelta(days=days_between_rebalancing)):(trading_date_ts + timedelta(days = 1))].notna().any()
+                stock_intraday_prices_df[stock].loc[(trading_date_ts - timedelta(days=days_in_single_rolling_window)):(trading_date_ts + timedelta(days = 1))].notna().any()
         )
     ]
 
-    # From these available stocks, get the portfolio_size largest based on market caps for the current date
+    # From these available stocks, get the size largest based on market caps for the current date
     if trading_date_ts in stock_market_caps_df.index:
         daily_market_caps = stock_market_caps_df.loc[trading_date_ts, eligible_stocks].dropna()
         k_stock_market_caps_df = daily_market_caps.nlargest(portfolio_size)
@@ -578,17 +664,17 @@ def calculate_equally_weighted_portfolio(portfolio_spec,
     logger.info(f"Calculating equally weighted portfolio")
 
     # Determine the number of stocks in the portfolio
-    num_stocks = portfolio_spec["portfolio_size"]
+    num_stocks = portfolio_spec["size"]
 
     # Assign equal weight to each stock and create the resulting dataframe
-    portfolio_comp_df = pd.DataFrame({
+    portfolio_weights_df = pd.DataFrame({
         'Weight': [1 / num_stocks] * num_stocks
     }, index=k_stock_prices_df.columns)
 
     # Rename the index to 'Stock'
-    portfolio_comp_df.index.name = 'Stock'
+    portfolio_weights_df.index.name = 'Stock'
 
-    return portfolio_comp_df
+    return portfolio_weights_df
 
 def calculate_value_weighted_portfolio(portfolio_spec, 
                                        trading_date_ts, 
@@ -596,43 +682,51 @@ def calculate_value_weighted_portfolio(portfolio_spec,
     logger.info(f"Calculating market cap portfolio weights.")
     k_stock_market_caps_series = k_stock_market_caps_df.iloc[-1].sort_values(ascending=False)
 
+    # Extract the last index date from k_stock_market_caps_df
+    last_index_date = k_stock_market_caps_df.index[-1]
+
+    # Assert that the last index date is the same as trading_date_ts
+    assert last_index_date == trading_date_ts, "The last index date does not match the trading date."
+
     # Total market cap of the k largest stocks
     total_market_cap = k_stock_market_caps_series.sum()
 
     # Calculate value weights
-    portfolio_comp_df = pd.DataFrame(k_stock_market_caps_series / total_market_cap)
+    portfolio_weights_df = pd.DataFrame(k_stock_market_caps_series / total_market_cap)
 
     # Fix labels
-    portfolio_comp_df.index.name = 'Stock'
-    portfolio_comp_df.columns = ['Weight']
+    portfolio_weights_df.index.name = 'Stock'
+    portfolio_weights_df.columns = ['Weight']
 
-    return portfolio_comp_df
+    return portfolio_weights_df
 
 def calculate_shrinkage_portfolio(portfolio_spec, 
                                   trading_date_ts, 
                                   k_stock_prices_df,
                                   risk_free_rate_df):
     logger.info(f"Calculating shrinkage portfolio weights.")
-    k_stock_prices_window_adjusted_df = daily_prices_window_adjusted(
+    k_stock_prices_window_df = adjust_stock_prices_window(
         portfolio_spec,
         trading_date_ts,
         k_stock_prices_df)
 
     # Calculate the excess log returns for the adjusted stock prices
-    k_stock_excess_log_returns_window_adjusted_df = calculate_excess_log_returns_from_prices(
-        portfolio_spec, k_stock_prices_window_adjusted_df, risk_free_rate_df
+    k_stock_excess_log_returns_window_df = calculate_excess_log_returns_from_prices(
+        portfolio_spec, k_stock_prices_window_df, risk_free_rate_df
     )
 
+    window_annualization_factor = get_window_annualization_factor(portfolio_spec)
+
     # Mean return
-    mean_log_returns = expected_returns.mean_historical_return(k_stock_excess_log_returns_window_adjusted_df,
+    mean_log_returns = expected_returns.mean_historical_return(k_stock_excess_log_returns_window_df,
                                                                  returns_data=True,
                                                                  compounding=False,
-                                                                  frequency = 252)
+                                                                  frequency = window_annualization_factor)
 
     # Covariance matrix
-    covariance_log_returns = risk_models.CovarianceShrinkage(k_stock_excess_log_returns_window_adjusted_df,
+    covariance_log_returns = risk_models.CovarianceShrinkage(k_stock_excess_log_returns_window_df,
                                                                 returns_data=True,
-                                                                frequency = 252).ledoit_wolf()
+                                                                frequency = window_annualization_factor).ledoit_wolf()
 
     # Add risk free asset
     mean_log_returns_with_risk_free_asset = mean_log_returns.copy()
@@ -642,17 +736,32 @@ def calculate_shrinkage_portfolio(portfolio_spec,
     covariance_log_returns_with_risk_free_asset["RISK_FREE"] = 0
     covariance_log_returns_with_risk_free_asset.loc["RISK_FREE"] = 0
 
-
-
     ef = EfficientFrontier(mean_log_returns_with_risk_free_asset, covariance_log_returns_with_risk_free_asset, weight_bounds=(-100, 100))
     raw_portfolio_comp = ef.max_quadratic_utility(risk_aversion=portfolio_spec["risk_aversion"])
 
     # Convert cleaned weights to DataFrame
-    portfolio_comp_df = pd.DataFrame(list(ef.clean_weights().items()), columns=['Stock', 'Weight'])
-    portfolio_comp_df.set_index('Stock', inplace=True)
-    portfolio_comp_df = portfolio_comp_df.drop("RISK_FREE")
+    portfolio_weights_df = pd.DataFrame(list(ef.clean_weights().items()), columns=['Stock', 'Weight'])
+    portfolio_weights_df.set_index('Stock', inplace=True)
+    portfolio_weights_df = portfolio_weights_df.drop("RISK_FREE")
 
-    return portfolio_comp_df
+    # Check that it is the same as doing 1/gamma * Sigma^{-1}mu
+    if CHECK:
+        # Calculate the inverse of the covariance matrix
+        inv_covariance = np.linalg.inv(covariance_log_returns.values)
+
+        # Calculate portfolio weights for the tangency portfolio
+        weights = 1 / portfolio_spec["risk_aversion"] * np.dot(inv_covariance, mean_log_returns.values)
+
+        # Create a DataFrame for the portfolio composition
+        portfolio_weights_df_check = pd.DataFrame(weights, index = covariance_log_returns.index, columns = ['Weight'])
+
+        are_equal = np.isclose(portfolio_weights_df_check, portfolio_weights_df, rtol = 1e-4,
+                               atol = 1e-4).all().all()
+
+        if not are_equal:
+            raise ValueError(f"Shrinkage weights are not consistent.")
+
+    return portfolio_weights_df
 
 def calculate_black_litterman_portfolio(portfolio_spec,
                                         trading_date_ts,
@@ -660,22 +769,24 @@ def calculate_black_litterman_portfolio(portfolio_spec,
                                         k_stock_prices_df,
                                         risk_free_rate_df):
     logger.info(f"Calculating Black-Litterman portfolio weights.")
-    k_stock_prices_window_adjusted_df = daily_prices_window_adjusted(
+    k_stock_prices_window_df = adjust_stock_prices_window(
         portfolio_spec,
         trading_date_ts,
         k_stock_prices_df)
 
     # Calculate the excess log returns for the adjusted stock prices
-    k_stock_excess_log_returns_window_adjusted_df = calculate_excess_log_returns_from_prices(
-        portfolio_spec, k_stock_prices_window_adjusted_df, risk_free_rate_df
+    k_stock_excess_log_returns_window_df = calculate_excess_log_returns_from_prices(
+        portfolio_spec, k_stock_prices_window_df, risk_free_rate_df
     )
 
     k_stock_market_caps_latest_df = k_stock_market_caps_df.iloc[-1].sort_values(ascending=False)
 
+    window_annualization_factor = get_window_annualization_factor(portfolio_spec)
+
     # Covariance matrix
-    covariance_log_returns = risk_models.CovarianceShrinkage(k_stock_excess_log_returns_window_adjusted_df,
+    covariance_log_returns = risk_models.CovarianceShrinkage(k_stock_excess_log_returns_window_df,
                                                              returns_data=True,
-                                                             frequency = 252).ledoit_wolf()
+                                                             frequency = window_annualization_factor).ledoit_wolf()
 
     viewdict = {}
     market_prior = black_litterman.market_implied_prior_returns(k_stock_market_caps_latest_df.squeeze(),
@@ -699,27 +810,27 @@ def calculate_black_litterman_portfolio(portfolio_spec,
     raw_portfolio_comp = ef.max_quadratic_utility(risk_aversion=portfolio_spec["risk_aversion"])
 
     # Convert cleaned weights to DataFrame
-    portfolio_comp_df = pd.DataFrame(list(ef.clean_weights().items()), columns=['Stock', 'Weight'])
-    portfolio_comp_df.set_index('Stock', inplace=True)
-    portfolio_comp_df = portfolio_comp_df.drop("RISK_FREE")
+    portfolio_weights_df = pd.DataFrame(list(ef.clean_weights().items()), columns=['Stock', 'Weight'])
+    portfolio_weights_df.set_index('Stock', inplace=True)
+    portfolio_weights_df = portfolio_weights_df.drop("RISK_FREE")
 
-    return portfolio_comp_df
+    return portfolio_weights_df
 
-def calculate_conjugate_hf_vix_portfolio(portfolio_spec,
+def calculate_conjugate_hf_mcm_portfolio(portfolio_spec,
                                          trading_date_ts,
                                          k_stock_market_caps_df,
                                          k_stock_prices_df,
                                          k_stock_intraday_prices_df,
-                                         vix_prices_df,
+                                         mcm_prices_df,
                                          risk_free_rate_df):
-    logger.info(f"Calculating conjugate high frequency VIX portfolio weights.")
+    logger.info(f"Calculating conjugate high frequency MCM portfolio weights.")
 
     mean_conjugate_posterior_nu_df = calculate_mean_conjugate_posterior_nu(portfolio_spec,
                                                                         trading_date_ts,
                                                                         k_stock_prices_df,
                                                                         k_stock_market_caps_df,
                                                                         k_stock_intraday_prices_df,
-                                                                        vix_prices_df,
+                                                                        mcm_prices_df,
                                                                         risk_free_rate_df)
 
     return 1 / portfolio_spec["risk_aversion"] * mean_conjugate_posterior_nu_df
@@ -737,32 +848,32 @@ def calculate_jeffreys_portfolio(portfolio_spec,
 
     return 1 / portfolio_spec["risk_aversion"] * mean_jeffreys_posterior_nu_df
 
-def calculate_jorion_hyperparameter_portfolio(portfolio_spec,
-                                              trading_date_ts,
-                                              k_stock_prices_df,
-                                              risk_free_rate_df):
+def calculate_jorion_portfolio(portfolio_spec,
+                              trading_date_ts,
+                              k_stock_prices_df,
+                              risk_free_rate_df):
 
-    logger.info(f"Calculating Jorion hyperparameter portfolio.")
+    logger.info(f"Calculating Jorion portfolio.")
 
     # Adjust the stock prices DataFrame based on rolling window
-    k_stock_prices_window_adjusted_df = daily_prices_window_adjusted(
+    k_stock_prices_window_df = adjust_stock_prices_window(
         portfolio_spec, trading_date_ts, k_stock_prices_df
     )
 
     # Calculate the excess log returns for the adjusted stock prices
-    k_stock_excess_log_returns_window_adjusted_df = calculate_excess_log_returns_from_prices(
-        portfolio_spec, k_stock_prices_window_adjusted_df, risk_free_rate_df
+    k_stock_excess_log_returns_window_df = calculate_excess_log_returns_from_prices(
+        portfolio_spec, k_stock_prices_window_df, risk_free_rate_df
     )
 
     # Using notations of Bayesian Portfolio Analysis (2010) by Avramov and Zhou
     N = len(k_stock_prices_df.columns)
-    T = len(k_stock_excess_log_returns_window_adjusted_df)
+    T = len(k_stock_excess_log_returns_window_df)
 
     # Sample mean
-    mu_hat_df = k_stock_excess_log_returns_window_adjusted_df.mean().to_frame()
+    mu_hat_df = k_stock_excess_log_returns_window_df.mean().to_frame()
 
     # Sample covariance
-    V_hat_df = k_stock_excess_log_returns_window_adjusted_df.cov()
+    V_hat_df = k_stock_excess_log_returns_window_df.cov()
 
     # Shrinkage
     V_bar_df = T / (T - N - 2) * V_hat_df
@@ -779,37 +890,37 @@ def calculate_jorion_hyperparameter_portfolio(portfolio_spec,
 
     V_hat_PJ_inverse_df = pd.DataFrame(np.linalg.inv(V_hat_PJ.to_numpy()), index=V_hat_PJ.index, columns=V_hat_PJ.columns)
 
-    portfolio_comp_df = 1 / portfolio_spec["risk_aversion"] * V_hat_PJ_inverse_df.dot(mu_hat_PJ_df).reset_index().rename(columns={'index': 'Stock', 0: 'Weight'}).set_index('Stock')
+    portfolio_weights_df = 1 / portfolio_spec["risk_aversion"] * V_hat_PJ_inverse_df.dot(mu_hat_PJ_df).reset_index().rename(columns={'index': 'Stock', 0: 'Weight'}).set_index('Stock')
 
-    return portfolio_comp_df
+    return portfolio_weights_df
 
-def calculate_hierarchical_portfolio(portfolio_spec,
+def calculate_greyserman_portfolio(portfolio_spec,
                                       trading_date_ts,
                                       k_stock_prices_df,
                                       risk_free_rate_df):
 
-    logger.info(f"Calculating hierarchical portfolio.")
+    logger.info(f"Calculating Greyserman portfolio.")
 
     # Adjust the stock prices DataFrame based on the portfolio's rebalancing frequency and rolling window
-    k_stock_prices_window_adjusted_df = daily_prices_window_adjusted(
+    k_stock_prices_window_df = adjust_stock_prices_window(
         portfolio_spec, trading_date_ts, k_stock_prices_df
     )
 
     # Calculate the excess log returns for the adjusted stock prices
-    k_stock_excess_log_returns_window_adjusted_df = calculate_excess_log_returns_from_prices(
-        portfolio_spec, k_stock_prices_window_adjusted_df, risk_free_rate_df
+    k_stock_excess_log_returns_window_df = calculate_excess_log_returns_from_prices(
+        portfolio_spec, k_stock_prices_window_df, risk_free_rate_df
     )
 
-    n = len(k_stock_excess_log_returns_window_adjusted_df)
+    n = len(k_stock_excess_log_returns_window_df)
     k = len(k_stock_prices_df.columns)
-    x_bar_df = k_stock_excess_log_returns_window_adjusted_df.mean().to_frame()
-    S_df = k_stock_excess_log_returns_window_adjusted_df.cov()
+    x_bar_df = k_stock_excess_log_returns_window_df.mean().to_frame()
+    S_df = k_stock_excess_log_returns_window_df.cov()
     S_h_df = pd.DataFrame(np.where(np.eye(k) == 1, 1, 0.5), index=S_df.index[:k], columns=S_df.index[:k])
     one_N_df = pd.DataFrame(np.ones(k), index=x_bar_df.index)
     kappa_h = round(0.1 * n)
     nu_h = k
     weights_b_storage = []
-    # Using notations of Incorporating different sources of information for Bayesian optimal portfolio selection (2023) by Bodnar et al.
+    # Using notations of Incorporating different sources of information for Bayesian optimal portfolio selection by Bodnar et al.
     for i in range(1000):
         xi_b = np.random.uniform(-1000, 1000)
         eta_b = gamma.rvs(a=1, scale=10)
@@ -835,6 +946,7 @@ def calculate_portfolio_weights(trading_date_ts,
     stock_prices_df = market_data["stock_prices_df"]
     stock_intraday_prices_df = market_data["stock_intraday_prices_df"]
     vix_prices_df = market_data["vix_prices_df"]
+    epu_prices_df = market_data["epu_prices_df"]
     risk_free_rate_df = market_data["risk_free_rate_df"]
     sp500_prices_df = market_data["sp500_prices_df"]
 
@@ -843,8 +955,8 @@ def calculate_portfolio_weights(trading_date_ts,
                                                               stock_prices_df,
                                                               stock_intraday_prices_df,
                                                               trading_date_ts,
-                                                              portfolio_spec["portfolio_size"],
-                                                              portfolio_spec["rolling_window_days"],
+                                                              portfolio_spec["size"],
+                                                              get_window_trading_days(portfolio_spec),
                                                               portfolio_spec["rebalancing_frequency"])
 
     # Filter all the data to only include data until current date. Very important!
@@ -864,38 +976,41 @@ def calculate_portfolio_weights(trading_date_ts,
     # Filter VIX prices
     vix_prices_df = vix_prices_df.loc[vix_prices_df.index <= trading_date_ts]
 
+    # Filter EPU prices
+    epu_prices_df = epu_prices_df.loc[epu_prices_df.index <= trading_date_ts]
+
     # Filter S&P 500 prices
     sp500_prices_df = sp500_prices_df.loc[sp500_prices_df.index <= trading_date_ts]
 
     # Check for NA values in the filtered DataFrame
-    if k_stock_prices_df.tail(portfolio_spec["rolling_window_days"]).isna().any().any():
+    if k_stock_prices_df.tail(get_window_trading_days(portfolio_spec)).isna().any().any():
         logger.error(f"Found NA values in the filtered stock prices.")
         raise ValueError(f"The filtered stock prices contain NA values.")
 
-    if portfolio_spec["weights_spec"] == "value_weighted":
-        portfolio_comp_df = calculate_value_weighted_portfolio(portfolio_spec,
+    if portfolio_spec["weighting_strategy"] == "vw":
+        portfolio_weights_df = calculate_value_weighted_portfolio(portfolio_spec,
                                                                 trading_date_ts,
                                                                 k_stock_market_caps_df)
 
-    elif portfolio_spec["weights_spec"] == "equally_weighted":
-        portfolio_comp_df = calculate_equally_weighted_portfolio(portfolio_spec,
+    elif portfolio_spec["weighting_strategy"] == "ew":
+        portfolio_weights_df = calculate_equally_weighted_portfolio(portfolio_spec,
                                                                 k_stock_prices_df)
 
-    elif portfolio_spec["weights_spec"] == "shrinkage":
-        portfolio_comp_df = calculate_shrinkage_portfolio(portfolio_spec,
+    elif portfolio_spec["weighting_strategy"] == "shrinkage":
+        portfolio_weights_df = calculate_shrinkage_portfolio(portfolio_spec,
                                                            trading_date_ts,
                                                            k_stock_prices_df,
                                                           risk_free_rate_df)
 
-    elif portfolio_spec["weights_spec"] == "black_litterman":
-        portfolio_comp_df = calculate_black_litterman_portfolio(portfolio_spec,
+    elif portfolio_spec["weighting_strategy"] == "black_litterman":
+        portfolio_weights_df = calculate_black_litterman_portfolio(portfolio_spec,
                                                                  trading_date_ts,
                                                                  k_stock_market_caps_df,
                                                                  k_stock_prices_df,
                                                                  risk_free_rate_df)
 
-    elif portfolio_spec["weights_spec"] == "conjugate_hf_vix":
-        portfolio_comp_df = calculate_conjugate_hf_vix_portfolio(portfolio_spec,
+    elif portfolio_spec["weighting_strategy"] == "conjugate_hf_vix_vw" or portfolio_spec["weighting_strategy"] == "conjugate_hf_vix_ew":
+        portfolio_weights_df = calculate_conjugate_hf_mcm_portfolio(portfolio_spec,
                                                                   trading_date_ts,
                                                                   k_stock_market_caps_df,
                                                                   k_stock_prices_df,
@@ -903,20 +1018,29 @@ def calculate_portfolio_weights(trading_date_ts,
                                                                   vix_prices_df,
                                                                   risk_free_rate_df)
 
-    elif portfolio_spec["weights_spec"] == "jeffreys":
-        portfolio_comp_df = calculate_jeffreys_portfolio(portfolio_spec,
+    elif portfolio_spec["weighting_strategy"] == "conjugate_hf_epu_vw" or portfolio_spec["weighting_strategy"] == "conjugate_hf_epu_ew":
+        portfolio_weights_df = calculate_conjugate_hf_mcm_portfolio(portfolio_spec,
+                                                                  trading_date_ts,
+                                                                  k_stock_market_caps_df,
+                                                                  k_stock_prices_df,
+                                                                  k_stock_intraday_prices_df,
+                                                                  epu_prices_df,
+                                                                  risk_free_rate_df)
+
+    elif portfolio_spec["weighting_strategy"] == "jeffreys":
+        portfolio_weights_df = calculate_jeffreys_portfolio(portfolio_spec,
                                                           trading_date_ts,
                                                           k_stock_prices_df,
                                                           risk_free_rate_df)
 
-    elif portfolio_spec["weights_spec"] == "jorion_hyper":
-        portfolio_comp_df = calculate_jorion_hyperparameter_portfolio(portfolio_spec,
+    elif portfolio_spec["weighting_strategy"] == "jorion":
+        portfolio_weights_df = calculate_jorion_portfolio(portfolio_spec,
                                                                       trading_date_ts,
                                                                       k_stock_prices_df,
                                                                       risk_free_rate_df)
 
-    elif portfolio_spec["weights_spec"] == "hierarchical":
-        portfolio_comp_df = calculate_hierarchical_portfolio(portfolio_spec,
+    elif portfolio_spec["weighting_strategy"] == "greyserman":
+        portfolio_weights_df = calculate_greyserman_portfolio(portfolio_spec,
                                                               trading_date_ts,
                                                               k_stock_prices_df,
                                                               risk_free_rate_df)
@@ -925,38 +1049,70 @@ def calculate_portfolio_weights(trading_date_ts,
         logger.error(f"Unknown weights spec.")
         raise ValueError(f"Unknown weights spec.")
 
-    return portfolio_comp_df
+    return portfolio_weights_df
 
-def compute_portfolio_turnover(portfolio_comp_before_df, portfolio_comp_after_df):
+def compute_portfolio_turnover(portfolio_weights_before_df, portfolio_weights_after_df):
 
     # Merging the old and new weights with a suffix to differentiate them
-    portfolio_comp_before_after_df = portfolio_comp_before_df.merge(portfolio_comp_after_df,
+    portfolio_weights_before_after_df = portfolio_weights_before_df.merge(portfolio_weights_after_df,
                                                 how='outer',
                                                 left_index=True,
                                                 right_index=True,
                                                 suffixes=('_before', '_after'))
 
     # Fill missing values with 0s (for new stocks or those that have been removed)
-    portfolio_comp_before_after_df.fillna(0, inplace=True)
+    portfolio_weights_before_after_df.fillna(0, inplace=True)
 
     # Calculate absolute difference for each stock and then compute turnover
-    portfolio_comp_before_after_df['weight_diff'] = abs(portfolio_comp_before_after_df['Weight_before'] - portfolio_comp_before_after_df['Weight_after'])
+    portfolio_weights_before_after_df['weight_diff'] = abs(portfolio_weights_before_after_df['Weight_before'] - portfolio_weights_before_after_df['Weight_after'])
 
     # Calculate turnover corresponding to risk free asset
-    risk_free_turnover = abs(portfolio_comp_before_df['Weight'].sum() - portfolio_comp_after_df['Weight'].sum())
+    risk_free_turnover = abs(portfolio_weights_before_df['Weight'].sum() - portfolio_weights_after_df['Weight'].sum())
 
     # Calculate total turnover
-    turnover = (portfolio_comp_before_after_df['weight_diff'].sum() + risk_free_turnover) / 2
+    turnover = (portfolio_weights_before_after_df['weight_diff'].sum() + risk_free_turnover) / 2
 
     return turnover
 
+def calculate_average_distance_to_comparison_portfolio(portfolio_weights_df,
+                                                  portfolio_spec,
+                                                  trading_date_ts,
+                                                  market_data,
+                                                  comparison_portfolio_weighting_strategy):
+    comparison_portfolio_spec = {"size": portfolio_spec["size"],
+                                 "rebalancing_frequency": portfolio_spec["rebalancing_frequency"],
+                                 "rolling_window": portfolio_spec["rolling_window"],
+                                 "rolling_window_frequency": portfolio_spec["rolling_window_frequency"]}
+
+    if comparison_portfolio_weighting_strategy == "vw":
+        comparison_portfolio_spec["weighting_strategy"] = "vw"
+    else:
+        raise ValueError("Unknown comparison portfolio.")
+
+    comparison_portfolio_weights_df = calculate_portfolio_weights(trading_date_ts,
+                                                                    comparison_portfolio_spec,
+                                                                    market_data)
+
+    # Ensure portfolio_weights_df and comparison_portfolio_weights_df have exactly the same stocks
+    if not portfolio_weights_df.index.equals(comparison_portfolio_weights_df.index):
+        raise ValueError("The portfolios do not match exactly in terms of stocks.")
+
+    # Compute average distance between weights using L1 norm
+    scaling = portfolio_spec["risk_aversion"] if portfolio_spec.get("risk_aversion") is not None else 1
+    average_distance = np.abs(portfolio_weights_df * scaling - comparison_portfolio_weights_df).mean().item()
+
+    return average_distance
+
 class Portfolio:
 
-    def get_portfolio_simple_returns_series(self):
+    def get_portfolio_simple_returns(self):
         return self.portfolio_simple_returns_series
 
     def get_portfolio_turnover(self):
         return self.portfolio_turnover_series
+
+    def get_portfolio_weights_metrics(self):
+        return self.portfolio_weights_metrics_df
 
     def __init__(self,
                  ts_start_date,
@@ -965,6 +1121,7 @@ class Portfolio:
         self.portfolio_spec = portfolio_spec
         self.portfolio_simple_returns_series = pd.Series(dtype = "float64", name = portfolio_spec["display_name"])
         self.portfolio_turnover_series = pd.Series(dtype = "float64", name = portfolio_spec["display_name"])
+        self.portfolio_weights_metrics_df = pd.DataFrame(dtype = "float64")
         self.last_rebalance_date_ts = None
 
     def update_portfolio(self,
@@ -974,36 +1131,35 @@ class Portfolio:
         # Calculate daily portfolio return
         if self.ts_start_date != trading_date_ts:
             # Filter out stocks not in the portfolio
-            filtered_stock_simple_returns_series = market_data["stock_simple_returns_df"].loc[trading_date_ts].reindex(self.portfolio_comp_df.index)
+            filtered_stock_simple_returns_series = market_data["stock_simple_returns_df"].loc[trading_date_ts].reindex(self.portfolio_weights_df.index)
 
             # Multiply returns by weights element-wise and then sum to get the portfolio return
-            portfolio_simple_return = (filtered_stock_simple_returns_series * self.portfolio_comp_df['Weight']).sum()
+            portfolio_simple_return = (filtered_stock_simple_returns_series * self.portfolio_weights_df['Weight']).sum()
 
             # Add risk-free return
             risk_free_rate_df = market_data["risk_free_rate_df"]
             most_recent_risk_free_rate = risk_free_rate_df.asof(trading_date_ts).iloc[0]
             risk_free_daily_return = ((most_recent_risk_free_rate + 1) ** (1 / 252) - 1)
-            portfolio_simple_return += (1 - self.portfolio_comp_df['Weight'].sum()) * risk_free_daily_return
+            portfolio_simple_return += (1 - self.portfolio_weights_df['Weight'].sum()) * risk_free_daily_return
 
             self.portfolio_simple_returns_series[trading_date_ts] = portfolio_simple_return
 
             # Update weight for the risk-free asset
-            current_risk_free_weight = 1 - self.portfolio_comp_df['Weight'].sum()
+            current_risk_free_weight = 1 - self.portfolio_weights_df['Weight'].sum()
             updated_risk_free_weight = current_risk_free_weight * (1 + risk_free_daily_return)
 
             # Update weights for the stocks
-            self.portfolio_comp_df['Weight'] = (
-                        self.portfolio_comp_df['Weight'] * (1 + filtered_stock_simple_returns_series))
-
+            self.portfolio_weights_df['Weight'] = (
+                        self.portfolio_weights_df['Weight'] * (1 + filtered_stock_simple_returns_series))
 
             # Update the total invested value by adding the updated risk-free weight
-            total_value = self.portfolio_comp_df['Weight'].sum() + updated_risk_free_weight
+            total_value = self.portfolio_weights_df['Weight'].sum() + updated_risk_free_weight
 
             # Normalize the weights so they sum up to 1
-            self.portfolio_comp_df['Weight'] = self.portfolio_comp_df['Weight'] / total_value
+            self.portfolio_weights_df['Weight'] = self.portfolio_weights_df['Weight'] / total_value
 
             # Check that weights sum to 1
-            if abs((self.portfolio_comp_df['Weight'].values.sum() + updated_risk_free_weight / total_value) - 1) > 1e-5:
+            if abs((self.portfolio_weights_df['Weight'].values.sum() + updated_risk_free_weight / total_value) - 1) > 1e-5:
                 logger.error(f"Weights do not sum to 1.")
                 raise ValueError(f"Weights do not sum to 1.")
 
@@ -1022,20 +1178,43 @@ class Portfolio:
         if rebalance:
             if not self.last_rebalance_date_ts is None:
                 # Make a copy of the current weights to calculate turnover later
-                portfolio_comp_before_df = self.portfolio_comp_df.copy()
+                portfolio_weights_before_df = self.portfolio_weights_df.copy()
 
             # Calculate the new portfolio weights
-            self.portfolio_comp_df = calculate_portfolio_weights(trading_date_ts,
+            self.portfolio_weights_df = calculate_portfolio_weights(trading_date_ts,
                                                                  self.portfolio_spec,
                                                                  market_data)
 
+            average_distance_to_comparison_portfolio = calculate_average_distance_to_comparison_portfolio(self.portfolio_weights_df,
+                                                                                                          self.portfolio_spec,
+                                                                                                          trading_date_ts,
+                                                                                                          market_data,
+                                                                                                          "vw")
+
+            portfolio_weights_max_long = self.portfolio_weights_df ['Weight'][self.portfolio_weights_df['Weight'] > 0].max()
+            portfolio_weights_max_short = self.portfolio_weights_df ['Weight'][self.portfolio_weights_df['Weight'] < 0].min()
+            portfolio_weights_avg_long = self.portfolio_weights_df ['Weight'][self.portfolio_weights_df['Weight'] > 0].mean()
+            portfolio_weights_avg_short = self.portfolio_weights_df ['Weight'][self.portfolio_weights_df['Weight'] < 0].mean()
+            portfolio_weights_avg_distance = average_distance_to_comparison_portfolio
+
+            # Prepare a DataFrame row to append
+            portfolio_weights_metrics_date_df = pd.DataFrame({
+                "max_long": [portfolio_weights_max_long],
+                "max_short": [portfolio_weights_max_short],
+                "avg_long": [portfolio_weights_avg_long],
+                "avg_short": [portfolio_weights_avg_short],
+                "average_distance_to_comparison_portfolio": [portfolio_weights_avg_distance]
+            }, index = [trading_date_ts])
+
+            self.portfolio_weights_metrics_df = pd.concat([self.portfolio_weights_metrics_df, portfolio_weights_metrics_date_df])
+
             if not self.last_rebalance_date_ts is None:
-                turnover = compute_portfolio_turnover(portfolio_comp_before_df, self.portfolio_comp_df)
+                turnover = compute_portfolio_turnover(portfolio_weights_before_df, self.portfolio_weights_df)
                 self.portfolio_turnover_series[trading_date_ts] = turnover
-                turnover_cost = self.portfolio_spec["turnover_cost_bps"] / 10000 * turnover
+                turnover_cost = self.portfolio_spec["turnover_cost"] / 10000 * turnover
                 self.portfolio_simple_returns_series[trading_date_ts] -= turnover_cost
 
-            logger.info(f"Portfolio size {trading_date_ts}: {len(self.portfolio_comp_df.index)}")
+            logger.info(f"Portfolio size {trading_date_ts}: {len(self.portfolio_weights_df.index)}")
 
             self.last_rebalance_date_ts = trading_date_ts
 
@@ -1054,5 +1233,6 @@ def backtest_portfolio(portfolio_spec,
         portfolio.update_portfolio(trading_date_ts,
                                    market_data)
 
-    return {"portfolio_simple_returns_series": portfolio.get_portfolio_simple_returns_series(),
-            "portfolio_turnover_series": portfolio.get_portfolio_turnover()}
+    return {"portfolio_simple_returns_series": portfolio.get_portfolio_simple_returns(),
+            "portfolio_turnover_series": portfolio.get_portfolio_turnover(),
+            "portfolio_weights_metrics_df": portfolio.get_portfolio_weights_metrics()}
