@@ -50,7 +50,7 @@ To install dependencies, navigate to the project directory in your terminal and 
 
 ## Running the Project
 
-After setting up your API keys, downloading the necessary data, and installing dependencies, you can execute the project. Running the main script will download relevant data, perform portfolio backtesting for the period between January 3, 2008, and June 30, 2023 (as discussed in the paper), save the results, generate performance metrics, and create visualizations to aid in understanding the portfolio's performance over time. Navigate to the project directory in your terminal and execute the main script:
+After setting up your API keys, downloading the necessary data, and installing dependencies, you can execute the project. Running the main script will download relevant data, perform portfolio backtesting for the period between January 4, 2007, and June 30, 2023 (as discussed in the paper), save the results, generate performance metrics, and create visualizations to aid in understanding the portfolio's performance over time. Navigate to the project directory in your terminal and execute the main script:
 
     ```shell
     python3 main.py
