@@ -22,6 +22,9 @@ In addition to the data automatically gathered through the APIs, there is some d
 - **Risk-Free Rate (DTB3):**
   - Download the DTB3 data from [FRED](https://fred.stlouisfed.org/series/DTB3).
   - Save the data as `DTB3.csv` and place it in `data/risk_free_rate`.
+- **EPU Values:**
+  - Download the EPU data from [FRED](https://fred.stlouisfed.org/series/USEPUINDXD).
+  - Rename the column to `EPU` and save the data as `EPU.csv` and place it in `data/epu_prices`.
 
 ## Setup
 
