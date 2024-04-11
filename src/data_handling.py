@@ -33,6 +33,9 @@ stock_market_caps_dir = os.path.join(data_dir, 'stock_market_caps')
 # Construct the path to the vix directory inside the data directory
 vix_dir = os.path.join(data_dir, 'vix_prices')
 
+# Construct the path to the epu directory inside the data directory
+epu_dir = os.path.join(data_dir, 'epu_prices')
+
 # Construct the path to the S&P500 prices directory inside the data directory
 sp500tr_dir = os.path.join(data_dir, 'sp500_prices')
 
@@ -196,6 +199,26 @@ def get_vix_prices():
 
     return vix_prices_df
 
+def get_epu_prices():
+    csv_file = os.path.join(epu_dir, 'EPU.csv')
+
+    if os.path.exists(csv_file):
+        # Read CSV and treat '.' as NaN
+        epu_prices_df = pd.read_csv(csv_file, index_col=0, parse_dates=True, na_values=['.'])
+    else:
+        raise ValueError(f"EPU prices csv must be downloaded. Please visit https://fred.stlouisfed.org/series/USEPUINDXD")
+
+    # Use pd.Timestamp date
+    epu_prices_df.index = pd.to_datetime(epu_prices_df.index)
+
+    # Convert 'EPU' column to float
+    epu_prices_df['EPU'] = epu_prices_df['EPU'].astype(float)
+
+    # Sort the index
+    risk_free_rate = epu_prices_df.sort_index()
+
+    return risk_free_rate
+
 
 def get_sp500tr_prices():
     str_start_date = "2000-01-01"
@@ -204,21 +227,21 @@ def get_sp500tr_prices():
     csv_file = os.path.join(sp500tr_dir, 'SP500TR.csv')
 
     if os.path.exists(csv_file):
-        sp500tr_prices = pd.read_csv(csv_file, index_col=0, parse_dates=True)  # Assuming the first column is a date index
+        sp500tr_prices_df = pd.read_csv(csv_file, index_col=0, parse_dates=True)  # Assuming the first column is a date index
     else:
         # Prompt the user for a response
         user_response = input("Do you want to save SP500TR data to CSV? (Y/N): ").strip().upper()
 
         if user_response == 'Y':
             yahoo_finance.save_sp500tr_prices_to_csv(str_start_date, str_end_date)
-            sp500tr_prices = pd.read_csv(csv_file, index_col=0, parse_dates=True)  # Reload the saved CSV
+            sp500tr_prices_df = pd.read_csv(csv_file, index_col=0, parse_dates=True)  # Reload the saved CSV
         else:
-            sp500tr_prices = None
+            sp500tr_prices_df = None
 
     # Use pd.Timestamp date
-    sp500tr_prices.index = pd.to_datetime(sp500tr_prices.index)
+    sp500tr_prices_df.index = pd.to_datetime(sp500tr_prices_df.index)
 
-    return sp500tr_prices
+    return sp500tr_prices_df
 
 
 def get_risk_free_rate():
@@ -226,23 +249,23 @@ def get_risk_free_rate():
 
     if os.path.exists(csv_file):
         # Read CSV and treat '.' as NaN
-        risk_free_rate = pd.read_csv(csv_file, index_col=0, parse_dates=True, na_values=['.'])
+        risk_free_rate_df = pd.read_csv(csv_file, index_col=0, parse_dates=True, na_values=['.'])
     else:
         raise ValueError(f"Risk-free rate csv must be downloaded. Please visit https://fred.stlouisfed.org/series/DTB3")
 
     # Use pd.Timestamp date
-    risk_free_rate.index = pd.to_datetime(risk_free_rate.index)
+    risk_free_rate_df.index = pd.to_datetime(risk_free_rate_df.index)
 
     # Convert 'DTB3' column to float
-    risk_free_rate['DTB3'] = risk_free_rate['DTB3'].astype(float)
+    risk_free_rate_df['DTB3'] = risk_free_rate_df['DTB3'].astype(float)
 
     # Divide 'DTB3' values by 100
-    risk_free_rate['DTB3'] = risk_free_rate['DTB3'] / 100.0
+    risk_free_rate_df['DTB3'] = risk_free_rate_df['DTB3'] / 100.0
 
     # Sort the index
-    risk_free_rate = risk_free_rate.sort_index()
+    risk_free_rate_df = risk_free_rate_df.sort_index()
 
-    return risk_free_rate
+    return risk_free_rate_df
 
 def get_market_data():
     stock_prices_df = get_stock_prices()
@@ -251,6 +274,7 @@ def get_market_data():
     stock_intraday_prices_df = get_stock_intraday_prices()
     stock_market_caps_df = get_stock_market_caps()
     vix_prices_df = get_vix_prices()
+    epu_prices_df = get_epu_prices()
     sp500_prices_df = get_sp500tr_prices()
     sp500_simple_returns_df = sp500_prices_df.pct_change()
     risk_free_rate_df = get_risk_free_rate()
@@ -261,6 +285,7 @@ def get_market_data():
             "stock_intraday_prices_df": stock_intraday_prices_df,
             "stock_market_caps_df": stock_market_caps_df,
             "vix_prices_df": vix_prices_df,
+            "epu_prices_df": epu_prices_df,
             "sp500_prices_df": sp500_prices_df,
             "sp500_simple_returns_df": sp500_simple_returns_df,
             "risk_free_rate_df": risk_free_rate_df}
